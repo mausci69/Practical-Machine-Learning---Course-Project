@@ -1,0 +1,246 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Maurizio Scibilia"
+date: "31/01/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+The available data are composed by a Training data and a small Testing Data, that we'll use to validate the model that we'll choose.
+The column keeping the data we want to predict is classe.
+
+
+
+## Loading libraries
+
+```{r}
+library(caret)
+library(rattle)
+library(corrplot)
+library(ggplot2)
+```
+
+
+
+## Loading data
+
+First we download the two datasets:
+```{r}
+training <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"), 
+          
+                         header = T)
+validating <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"), 
+                       header = T)
+```
+
+Then we check their dimensions:
+```{r}
+dim(training)
+dim(validating)
+```
+
+Let's take a look at one data structure:
+```{r}
+str(training)
+```
+
+There are a lot of missing values we are going to take care of in the next section.
+
+
+
+## Data Cleaning
+
+We have 160 variables.
+Our goal is to keep only the ones that our models are gonna need.
+Let's start looking for the ones with a low variance, which means no real predictive power.
+We find them with the nearZeroVar function from caret.
+Then we remove them from our datasets.
+```{r}
+near_zero_var <- nearZeroVar(training)
+training <- training[, -near_zero_var]
+validating <- validating[, -near_zero_var]
+dim(training)
+dim(validating)
+```
+
+We just removed 60 variables from our datasets.
+Now we take care of the variables with missing values.
+Let's see how many missing values they have:
+```{r}
+training_na <- training[, colSums(is.na(training)) != 0]
+colSums(is.na(training_na))
+```
+
+41 columns have 19216 missing values, out of 19622.
+We can definitely remove them all:
+```{r}
+training <- training[, colSums(is.na(training)) == 0]
+validating <- validating[, colSums(is.na(validating)) == 0]
+dim(training)
+dim(validating)
+```
+
+The remaining columns are 59.
+We end up this part of our job by removing the first five columns, containing id variables, with no predicting power:
+```{r}
+training <- training[, -(1:5)]
+validating  <- validating[, -(1:5)]
+dim(training)
+dim(validating)
+```
+
+We end up this part with just 54 variables, that seems a big improvement from the 160 we started with.
+
+
+
+## Esplanatory Data Analysis
+
+First, let's check our outcome, the variable classe:
+```{r}
+t <- table(training$classe)
+t
+```
+
+We show these numbers in a bar chart:
+```{r}
+g <- ggplot(training, aes(x = factor(classe)))
+g <- g + geom_bar()
+g <- g + labs(x = "Classe", y = "Count")
+g
+```
+
+We end up looking at correlation between the remaining variables (keeping the classe column, that is not numerical, out of the analysis):
+```{r}
+corr_mtr <- cor(training[,-54])
+corrplot(corr_mtr, 
+         order = "hclust", 
+         method = "circle", 
+         type = "upper",
+         col = c("black", "white"),
+         bg = "lightblue")
+```
+
+
+
+## Data Splitting
+
+First, we set the seed to insure the reproducibility of our results.
+Then we'll use the createDataPartition method to split our training dataset in two datasets, one for the actual training of our models, and the other one to check its validity:
+```{r}
+set.seed(32323) 
+inTrain <- createDataPartition(training$classe, p = 0.7, list = FALSE)
+trainData <- training[inTrain, ]
+testData <- training[-inTrain, ]
+dim(trainData)
+dim(testData)
+```
+
+We're gonna use these datasets with three different models:
+- Decision Trees
+- Random Forest
+- Generalized Boosted Method
+
+
+
+## Decision Trees
+
+We train a model with classe as outcome and every other remaining variable as predictor.
+The method parameter is set to 'rpart': 
+```{r echo=FALSE}
+mod_dt <- train(classe ~ ., method = "rpart", data = trainData)
+```
+
+Let's show the resulting DT with the function fancyRpartPlot, from the rattle library:
+```{r}
+fancyRpartPlot(mod_dt$finalModel)
+```
+
+Now we'll make the predictions on testData with this model and we'll keep them in acc_dt:
+```{r}
+pred_dt <- predict(mod_dt, newdata = testData)
+acc_dt <- as.numeric(confusionMatrix(pred_dt, testData$classe)$overall[1])
+```
+
+Finally, let's see the whole confusion matrix:
+```{r}
+confusionMatrix(pred_dt, testData$classe)
+```
+
+
+
+## Random Forest
+
+We train a new model, still with classe as outcome and every other remaining variable as predictor.
+The method parameter is this time set to 'rf': 
+```{r echo=FALSE}
+mod_rf <- train(classe ~ ., method = "rf", data = trainData)
+```
+
+Again, we'll make the predictions on testData with this model and we'll keep them in acc_rf:
+```{r}
+pred_rf <- predict(mod_rf, newdata = testData)
+acc_rf <- as.numeric(confusionMatrix(pred_rf, testData$classe)$overall[1])
+```
+
+Finally, let's take a look at the whole confusion matrix:
+```{r}
+confusionMatrix(pred_rf, testData$classe)
+```
+
+
+
+## Generalized Boosted Method
+
+We train a third model, with classe as outcome and every other remaining variable as predictor.
+The method parameter is set to 'gbm': 
+```{r echo=FALSE}
+mod_gbm <- train(classe ~ ., method = "gbm", data = trainData)
+```
+
+For the third time, we'll make the predictions on testData with this model and we'll keep them in acc_gbm:
+```{r}
+pred_gbm <- predict(mod_gbm, newdata = testData)
+acc_gbm <- as.numeric(confusionMatrix(pred_gbm, testData$classe)$overall[1])
+```
+
+While the whole confusion matrix is:
+```{r}
+confusionMatrix(pred_gbm, testData$classe)
+```
+
+
+
+## Applying our best model to the validating dataset
+
+First, let's build the dataset with the four accuracies:
+```{r}
+accuracies <- data.frame(Method = c('Decision Trees', 'Random Forest', 'Generalized Boosted Method'),
+                         Accuracy = c(acc_dt, acc_rf, acc_gbm))
+```
+
+Second, let's check the winner:
+```{r}
+accuracies
+```
+
+The winner is Random Forest that reaches almost 100% of accuracy.
+To finish, we use the winning method to train a model on the whole dataset.
+Then, we use this model to produce our predictions on validating:
+```{r echo=FALSE}
+mod_rf_whole <- train(classe ~ ., method = "rf", data = training)
+```
+
+```{r}
+predict(mod_rf_whole, validating)
+```
+
+We got our predictions. 
+Thank you.
